@@ -35,9 +35,47 @@ const products = {
     description: 'A handmade-feeling mug with a joyfully oversized handle for slow starts.',
     color: '#bf3824',
   },
+  candle: {
+    name: 'Fig Leaf Candle',
+    price: 29,
+    kicker: 'Green & bright / 40 hr burn',
+    image: 'assets/product-candle.webp',
+    alt: 'Chartreuse green candle in a translucent glass vessel on a coral background.',
+    description: 'A bright, green little mood-lifter with soft fig leaf and warm cedar notes.',
+    color: '#7e9111',
+  },
+  stool: {
+    name: 'Ripple Side Stool',
+    price: 94,
+    kicker: 'A nice little pedestal / Clay',
+    image: 'assets/product-stool.webp',
+    alt: 'Glossy terracotta side stool with a rippled stacked silhouette.',
+    description: 'A glossy little landing spot for a book, a drink, or simply a nice corner.',
+    color: '#bd5136',
+  },
+  plate: {
+    name: 'Sunday Plate',
+    price: 32,
+    kicker: 'For the good stuff / Cobalt',
+    image: 'assets/product-plate.webp',
+    alt: 'Cobalt blue wavy ceramic plate holding an orange.',
+    description: 'A wavy-rim plate that turns whatever is on it into a bit of a ceremony.',
+    color: '#1c4c9b',
+  },
 };
 
-const cart = new Map();
+const CART_STORAGE_KEY = 'luma-market-cart';
+const storedCartEntries = (() => {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY));
+    return Array.isArray(stored)
+      ? stored.filter(([id, quantity]) => products[id] && Number.isFinite(quantity) && quantity > 0)
+      : [];
+  } catch {
+    return [];
+  }
+})();
+const cart = new Map(storedCartEntries);
 let lastTrigger = null;
 let toastTimer = null;
 
@@ -68,6 +106,14 @@ const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: '
 
 function formatPrice(price) {
   return currency.format(price);
+}
+
+function saveCart() {
+  try {
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify([...cart.entries()]));
+  } catch {
+    // The cart remains usable for the current session if storage is unavailable.
+  }
 }
 
 function getCartCount() {
@@ -162,6 +208,7 @@ function cartItemMarkup(id, quantity) {
 }
 
 function renderCart() {
+  saveCart();
   const totalQuantity = getCartCount();
   const total = getCartTotal();
 
@@ -368,7 +415,9 @@ menuToggle.addEventListener('click', () => (mobileMenu.classList.contains('is-op
 document.querySelector('.close-menu').addEventListener('click', () => closeMobileMenu());
 document.querySelectorAll('.mobile-menu nav a').forEach((link) => link.addEventListener('click', () => closeMobileMenu(false)));
 
-checkoutButton.addEventListener('click', () => showToast('Checkout is ready for your payment flow'));
+checkoutButton.addEventListener('click', () => {
+  if (!checkoutButton.disabled) window.location.href = 'checkout.html';
+});
 document.querySelector('.desktop-only').addEventListener('click', () => showToast('Your account space is coming soon'));
 
 // Newsletter feedback
