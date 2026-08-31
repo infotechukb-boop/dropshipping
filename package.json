@@ -1,0 +1,14 @@
+{
+  "name": "luma-market-cj-storefront",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Luma Market storefront with a secure CJdropshipping catalogue proxy.",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "check": "node --check server.js && node --check app.js && node --check pages.js && node --check cj-catalog.js && node --check cj-product.js && node --check checkout.js"
+  }
+}
