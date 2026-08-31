@@ -22,7 +22,72 @@ const products = {
   },
 };
 
+const PRODUCT_CATALOG_KEY = 'luma-market-product-catalog';
 const CART_STORAGE_KEY = 'luma-market-cart';
+
+function cleanText(value, limit = 300) {
+  return String(value ?? '').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, limit);
+}
+
+function safeProductImage(value) {
+  try {
+    const image = new URL(String(value || ''), window.location.href);
+    return image.protocol === 'https:' ? image.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function sanitizeCatalogProduct(raw) {
+  const id = cleanText(raw?.id, 220);
+  const parsedPrice = Number.parseFloat(raw?.price);
+  if (!/^[a-z0-9:_-]{1,220}$/i.test(id) || !Number.isFinite(parsedPrice) || parsedPrice < 0) return null;
+  const name = cleanText(raw?.name, 200);
+  const image = safeProductImage(raw?.image);
+  if (!name || !image) return null;
+  return {
+    id,
+    name,
+    price: Number(parsedPrice.toFixed(2)),
+    kicker: cleanText(raw?.kicker || raw?.category || 'CJdropshipping pick', 160),
+    colorName: cleanText(raw?.colorName || raw?.category || 'CJ option', 100),
+    image,
+    alt: cleanText(raw?.alt || name, 240),
+    description: cleanText(raw?.description || 'A CJdropshipping product selected for the Luma edit.', 850),
+    color: /^#[0-9a-f]{6}$/i.test(raw?.color || '') ? raw.color : '#067b5c',
+    source: raw?.source === 'cj' ? 'cj' : 'catalog',
+    sourceId: cleanText(raw?.sourceId, 220),
+    sku: cleanText(raw?.sku, 200),
+  };
+}
+
+function persistSupplierProducts() {
+  try {
+    const supplierProducts = Object.values(products).filter((product) => product.source === 'cj').slice(-96);
+    window.localStorage.setItem(PRODUCT_CATALOG_KEY, JSON.stringify(supplierProducts));
+  } catch {
+    // Product caching is a convenience; the current page remains usable without it.
+  }
+}
+
+function registerProduct(raw) {
+  const product = sanitizeCatalogProduct(raw);
+  if (!product) return null;
+  products[product.id] = product;
+  if (product.source === 'cj') persistSupplierProducts();
+  return product;
+}
+
+try {
+  const storedProducts = JSON.parse(window.localStorage.getItem(PRODUCT_CATALOG_KEY));
+  if (Array.isArray(storedProducts)) storedProducts.map(sanitizeCatalogProduct).filter(Boolean).forEach((product) => { products[product.id] = product; });
+} catch {
+  // Stored supplier products are optional; the storefront continues with its local edit.
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
+}
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const body = document.body;
 const siteHeader = document.querySelector('.site-header');
@@ -40,6 +105,7 @@ const menuToggle = document.querySelector('.menu-toggle');
 let lastTrigger = null;
 let toastTimer = null;
 let pdpQuantity = 1;
+let activePdpProductId = null;
 
 const storedCartEntries = (() => {
   try {
@@ -82,20 +148,22 @@ function showToast(message) {
 
 function cartItemMarkup(id, quantity) {
   const product = products[id];
+  const safeId = escapeHtml(id);
+  const safeName = escapeHtml(product.name);
   return `
-    <article class="cart-item" data-cart-id="${id}">
-      <img class="cart-item__image" src="${product.image}" alt="${product.alt}" />
+    <article class="cart-item" data-cart-id="${safeId}">
+      <img class="cart-item__image" src="${escapeHtml(product.image)}" alt="${escapeHtml(product.alt)}" />
       <div>
-        <p class="product-kicker">${product.kicker}</p>
-        <h3>${product.name}</h3>
+        <p class="product-kicker">${escapeHtml(product.kicker)}</p>
+        <h3>${safeName}</h3>
         <span class="cart-item__price">${price(product.price)}</span>
-        <div class="cart-item__controls" aria-label="Quantity controls for ${product.name}">
+        <div class="cart-item__controls" aria-label="Quantity controls for ${safeName}">
           <div class="quantity-control">
-            <button type="button" data-cart-quantity="-1" data-product-id="${id}" aria-label="Decrease quantity of ${product.name}"><svg class="icon"><use href="#icon-minus"></use></svg></button>
+            <button type="button" data-cart-quantity="-1" data-product-id="${safeId}" aria-label="Decrease quantity of ${safeName}"><svg class="icon"><use href="#icon-minus"></use></svg></button>
             <span class="quantity-number" aria-label="Quantity">${quantity}</span>
-            <button type="button" data-cart-quantity="1" data-product-id="${id}" aria-label="Increase quantity of ${product.name}"><svg class="icon"><use href="#icon-plus"></use></svg></button>
+            <button type="button" data-cart-quantity="1" data-product-id="${safeId}" aria-label="Increase quantity of ${safeName}"><svg class="icon"><use href="#icon-plus"></use></svg></button>
           </div>
-          <button class="remove-button" type="button" data-remove-item="${id}">Remove</button>
+          <button class="remove-button" type="button" data-remove-item="${safeId}">Remove</button>
         </div>
       </div>
       <strong class="cart-item__total">${price(product.price * quantity)}</strong>
@@ -216,26 +284,39 @@ function sortCatalog(value) {
     .forEach((card) => grid.append(card));
 }
 
-function initialiseProductPage() {
-  const pageIsProduct = document.querySelector('[data-pdp-name]');
-  if (!pageIsProduct) return;
-  const requested = new URLSearchParams(window.location.search).get('product');
-  const productId = products[requested] ? requested : 'lamp';
+function renderPdpProduct(productId) {
   const product = products[productId];
+  if (!product || !document.querySelector('[data-pdp-name]')) return null;
+  activePdpProductId = productId;
   body.dataset.product = productId;
   document.querySelectorAll('[data-pdp-name]').forEach((element) => { element.textContent = product.name; });
   document.querySelector('[data-pdp-kicker]').textContent = product.kicker;
   document.querySelector('[data-pdp-price]').textContent = price(product.price);
   document.querySelector('[data-pdp-description]').textContent = product.description;
-  document.querySelector('[data-pdp-color-label]').textContent = product.colorName;
-  document.querySelector('[data-pdp-swatch-color]').style.backgroundColor = product.color;
+  document.querySelector('[data-pdp-color-label]').textContent = product.colorName || 'CJ option';
+  document.querySelector('[data-pdp-swatch-color]').style.backgroundColor = product.color || '#067b5c';
   const image = document.querySelector('[data-pdp-image]');
   image.src = product.image;
   image.alt = product.alt;
   document.title = `${product.name} — Luma Market`;
+  return product;
+}
+
+function setActiveProduct(productOrId) {
+  const product = typeof productOrId === 'string' ? products[productOrId] : registerProduct(productOrId);
+  if (!product) return null;
+  return renderPdpProduct(product.id);
+}
+
+function initialiseProductPage() {
+  const pageIsProduct = document.querySelector('[data-pdp-name]');
+  if (!pageIsProduct) return;
+  const requested = new URLSearchParams(window.location.search).get('product');
+  renderPdpProduct(products[requested] ? requested : 'lamp');
 
   document.querySelectorAll('[data-pdp-swatch]').forEach((button, index) => {
     button.addEventListener('click', () => {
+      const product = products[activePdpProductId];
       document.querySelectorAll('[data-pdp-swatch]').forEach((item) => {
         item.classList.remove('is-selected');
         item.setAttribute('aria-pressed', 'false');
@@ -252,7 +333,7 @@ function initialiseProductPage() {
       document.querySelector('[data-pdp-quantity-value]').textContent = pdpQuantity;
     });
   });
-  document.querySelector('[data-pdp-add]').addEventListener('click', () => addToCart(productId, pdpQuantity));
+  document.querySelector('[data-pdp-add]').addEventListener('click', () => addToCart(activePdpProductId, pdpQuantity));
 }
 
 function initialiseAccordions() {
@@ -329,6 +410,8 @@ document.addEventListener('keydown', (event) => {
     first.focus();
   }
 });
+
+window.LumaStore = { registerProduct, addToCart, renderCart, setActiveProduct, formatPrice: price };
 
 initialiseProductPage();
 initialiseAccordions();

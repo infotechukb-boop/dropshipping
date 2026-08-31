@@ -8,7 +8,45 @@ const products = {
   plate: { name: 'Sunday Plate', price: 32, image: 'assets/product-plate.webp', alt: 'Cobalt blue wavy ceramic plate holding an orange.' },
 };
 
+const PRODUCT_CATALOG_KEY = 'luma-market-product-catalog';
 const CART_STORAGE_KEY = 'luma-market-cart';
+
+function cleanText(value, limit = 300) {
+  return String(value ?? '').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, limit);
+}
+
+function safeProductImage(value) {
+  try {
+    const image = new URL(String(value || ''), window.location.href);
+    return image.protocol === 'https:' ? image.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function hydrateSupplierProducts() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(PRODUCT_CATALOG_KEY));
+    if (!Array.isArray(stored)) return;
+    stored.forEach((raw) => {
+      const id = cleanText(raw?.id, 220);
+      const itemPrice = Number.parseFloat(raw?.price);
+      const name = cleanText(raw?.name, 200);
+      const image = safeProductImage(raw?.image);
+      if (/^[a-z0-9:_-]{1,220}$/i.test(id) && Number.isFinite(itemPrice) && itemPrice >= 0 && name && image) {
+        products[id] = { name, price: Number(itemPrice.toFixed(2)), image, alt: cleanText(raw?.alt || name, 240) };
+      }
+    });
+  } catch {
+    // A cart can still be completed with the local product edit when cache is unavailable.
+  }
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
+}
+
+hydrateSupplierProducts();
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const cart = new Map((() => {
   try {
@@ -59,7 +97,9 @@ function deliveryValue() {
 
 function itemMarkup(id, quantity) {
   const product = products[id];
-  return `<article class="checkout-item"><img src="${product.image}" alt="${product.alt}" /><div><h3>${product.name}</h3><div class="checkout-quantity"><button type="button" data-checkout-change="-1" data-product-id="${id}" aria-label="Decrease quantity of ${product.name}"><svg class="icon"><use href="#icon-minus"></use></svg></button><span>${quantity}</span><button type="button" data-checkout-change="1" data-product-id="${id}" aria-label="Increase quantity of ${product.name}"><svg class="icon"><use href="#icon-plus"></use></svg></button></div></div><strong>${price(product.price * quantity)}</strong></article>`;
+  const safeId = escapeHtml(id);
+  const safeName = escapeHtml(product.name);
+  return `<article class="checkout-item"><img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.alt)}" /><div><h3>${safeName}</h3><div class="checkout-quantity"><button type="button" data-checkout-change="-1" data-product-id="${safeId}" aria-label="Decrease quantity of ${safeName}"><svg class="icon"><use href="#icon-minus"></use></svg></button><span>${quantity}</span><button type="button" data-checkout-change="1" data-product-id="${safeId}" aria-label="Increase quantity of ${safeName}"><svg class="icon"><use href="#icon-plus"></use></svg></button></div></div><strong>${price(product.price * quantity)}</strong></article>`;
 }
 
 function renderCheckout() {

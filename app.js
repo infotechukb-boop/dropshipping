@@ -64,7 +64,56 @@ const products = {
   },
 };
 
+const PRODUCT_CATALOG_KEY = 'luma-market-product-catalog';
 const CART_STORAGE_KEY = 'luma-market-cart';
+
+function cleanText(value, limit = 300) {
+  return String(value ?? '').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, limit);
+}
+
+function safeProductImage(value) {
+  try {
+    const image = new URL(String(value || ''), window.location.href);
+    return image.protocol === 'https:' ? image.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function sanitizeCatalogProduct(raw) {
+  const id = cleanText(raw?.id, 220);
+  const parsedPrice = Number.parseFloat(raw?.price);
+  if (!/^[a-z0-9:_-]{1,220}$/i.test(id) || !Number.isFinite(parsedPrice) || parsedPrice < 0) return null;
+  const name = cleanText(raw?.name, 200);
+  const image = safeProductImage(raw?.image);
+  if (!name || !image) return null;
+  return {
+    id,
+    name,
+    price: Number(parsedPrice.toFixed(2)),
+    kicker: cleanText(raw?.kicker || raw?.category || 'CJdropshipping pick', 160),
+    image,
+    alt: cleanText(raw?.alt || name, 240),
+    description: cleanText(raw?.description || 'A CJdropshipping product selected for the Luma edit.', 850),
+    color: /^#[0-9a-f]{6}$/i.test(raw?.color || '') ? raw.color : '#067b5c',
+    source: raw?.source === 'cj' ? 'cj' : 'catalog',
+    sourceId: cleanText(raw?.sourceId, 220),
+    sku: cleanText(raw?.sku, 200),
+  };
+}
+
+try {
+  const storedProducts = JSON.parse(window.localStorage.getItem(PRODUCT_CATALOG_KEY));
+  if (Array.isArray(storedProducts)) {
+    storedProducts.map(sanitizeCatalogProduct).filter(Boolean).forEach((product) => { products[product.id] = product; });
+  }
+} catch {
+  // Stored supplier products are optional; the storefront continues with its local edit.
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
+}
 const storedCartEntries = (() => {
   try {
     const stored = JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY));
@@ -187,20 +236,22 @@ function showToast(message) {
 
 function cartItemMarkup(id, quantity) {
   const product = products[id];
+  const safeId = escapeHtml(id);
+  const safeName = escapeHtml(product.name);
   return `
-    <article class="cart-item" data-cart-id="${id}">
-      <img class="cart-item__image" src="${product.image}" alt="${product.alt}" />
+    <article class="cart-item" data-cart-id="${safeId}">
+      <img class="cart-item__image" src="${escapeHtml(product.image)}" alt="${escapeHtml(product.alt)}" />
       <div>
-        <p class="product-kicker">${product.kicker}</p>
-        <h3>${product.name}</h3>
+        <p class="product-kicker">${escapeHtml(product.kicker)}</p>
+        <h3>${safeName}</h3>
         <span class="cart-item__price">${formatPrice(product.price)}</span>
-        <div class="cart-item__controls" aria-label="Quantity controls for ${product.name}">
+        <div class="cart-item__controls" aria-label="Quantity controls for ${safeName}">
           <div class="quantity-control">
-            <button type="button" data-quantity-change="-1" data-product-id="${id}" aria-label="Decrease quantity of ${product.name}"><svg class="icon"><use href="#icon-minus"></use></svg></button>
+            <button type="button" data-quantity-change="-1" data-product-id="${safeId}" aria-label="Decrease quantity of ${safeName}"><svg class="icon"><use href="#icon-minus"></use></svg></button>
             <span class="quantity-number" aria-label="Quantity">${quantity}</span>
-            <button type="button" data-quantity-change="1" data-product-id="${id}" aria-label="Increase quantity of ${product.name}"><svg class="icon"><use href="#icon-plus"></use></svg></button>
+            <button type="button" data-quantity-change="1" data-product-id="${safeId}" aria-label="Increase quantity of ${safeName}"><svg class="icon"><use href="#icon-plus"></use></svg></button>
           </div>
-          <button class="remove-button" type="button" data-remove-item="${id}">Remove</button>
+          <button class="remove-button" type="button" data-remove-item="${safeId}">Remove</button>
         </div>
       </div>
       <strong class="cart-item__total">${formatPrice(product.price * quantity)}</strong>
@@ -290,9 +341,9 @@ function renderSearch(query = '') {
   }
 
   searchResults.innerHTML = `<div class="search-product-list">${found.map(([id, product]) => `
-    <button class="search-product" type="button" data-search-product="${id}">
-      <img src="${product.image}" alt="" />
-      <span><strong>${product.name}</strong><span>${product.kicker}</span></span>
+    <button class="search-product" type="button" data-search-product="${escapeHtml(id)}">
+      <img src="${escapeHtml(product.image)}" alt="" />
+      <span><strong>${escapeHtml(product.name)}</strong><span>${escapeHtml(product.kicker)}</span></span>
       <span>${formatPrice(product.price)}</span>
     </button>`).join('')}</div>`;
 }
